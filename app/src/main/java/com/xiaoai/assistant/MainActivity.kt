@@ -1,7 +1,6 @@
 package com.xiaoai.assistant
 
 import android.Manifest
-import android.content.ComponentName
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -116,6 +115,14 @@ fun XiaoaiApp() {
     var useTextMode by remember { mutableStateOf(false) }
     var textInput by remember { mutableStateOf("") }
     var interimText by remember { mutableStateOf("") }
+    var currentTab by remember { mutableStateOf(0) }  // 0=对话, 1=音乐
+
+    // 音乐搜索状态
+    var musicKeyword by remember { mutableStateOf("") }
+    var musicResults by remember { mutableStateOf(listOf<MusicResult>()) }
+    var musicLoading by remember { mutableStateOf(false) }
+    var musicError by remember { mutableStateOf<String?>(null) }
+    var downloadingId by remember { mutableStateOf<String?>(null) }
 
     // SharedPreferences
     val prefs = remember { context.getSharedPreferences("xiaoai", 0) }
@@ -148,7 +155,7 @@ fun XiaoaiApp() {
         )
     }
 
-    // 语音识别器
+    // 语音识别器 — 不要绑定特定 Google 组件（国产手机无 Google 服务会闪退）
     val speechRecognizer = remember {
         try {
             SpeechRecognizer.createSpeechRecognizer(context)
@@ -239,21 +246,21 @@ fun XiaoaiApp() {
     ) { granted ->
         if (granted) {
             if (speechRecognizer != null) {
-                isListening = true
-                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-                    putExtra(RecognizerIntent.EXTRA_PROMPT, "请说话...")
-                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                    // 指定组件解决部分华为/小米设备兼容性
-                    component = ComponentName(
-                        "com.google.android.googlequicksearchbox",
-                        "com.google.android.googlequicksearchbox.VoiceSearchActivity"
-                    )
-                }
-                speechRecognizer.setRecognitionListener(recognitionListener)
-                speechRecognizer.startListening(intent)
+                                                                isListening = true
+                                                                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                                                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                                                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+                                                                    putExtra(RecognizerIntent.EXTRA_PROMPT, "请说话...")
+                                                                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                                                                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                                                                }
+                                                                speechRecognizer.setRecognitionListener(recognitionListener)
+                                                                try {
+                                                                    speechRecognizer.startListening(intent)
+                                                                } catch (e: Exception) {
+                                                                    isListening = false
+                                                                    Toast.makeText(context, "语音识别启动失败: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                                                                }
             } else {
                 Toast.makeText(context, "设备不支持语音识别", Toast.LENGTH_SHORT).show()
             }
@@ -286,32 +293,46 @@ fun XiaoaiApp() {
                 ) {
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // ---- 标题栏 ----
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "🎙️ ",
-                            fontSize = 28.sp
-                        )
-                        Text(
-                            text = "小管家 AI 助手",
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = AccentCyan
-                        )
-                        Spacer(modifier = Modifier.weight(1f))
-                        // 设置按钮
-                        IconButton(onClick = { showSettings = true }) {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = "设置",
-                                tint = TextSecondary
-                            )
+                    // ---- 底部导航栏 ----
+                    if (currentTab == 0) {
+                        TabRow(
+                            selectedTabIndex = currentTab,
+                            containerColor = NavyDark,
+                            contentColor = AccentCyan
+                        ) {
+                            Tab(selected = currentTab == 0, onClick = { currentTab = 0 }, text = { Text("💬 对话") })
+                            Tab(selected = currentTab == 1, onClick = { currentTab = 1 }, text = { Text("🎵 音乐") })
                         }
                     }
+
+                    // ---- 对话页 ----
+                    if (currentTab == 0) {
+                        // ---- 标题栏 ----
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "🎙️ ",
+                                fontSize = 28.sp
+                            )
+                            Text(
+                                text = "小管家 AI 助手",
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentCyan
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            // 设置按钮
+                            IconButton(onClick = { showSettings = true }) {
+                                Icon(
+                                    Icons.Default.Settings,
+                                    contentDescription = "设置",
+                                    tint = TextSecondary
+                                )
+                            }
+                        }
 
                     // ---- 状态栏 ----
                     Row(
@@ -560,6 +581,15 @@ fun XiaoaiApp() {
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                // ---- 音乐页 ----
+                if (currentTab == 1) {
+                    MusicTab(
+                        serverUrl = serverUrl,
+                        api = api,
+                        scope = scope
+                    )
                 }
 
                 // ---- 设置弹窗 ----

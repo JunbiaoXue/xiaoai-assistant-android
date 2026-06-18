@@ -11,16 +11,12 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 小管家 API 客户端
- *
- * 通过 HTTP 与服务端通信：
- * - GET  /api/status  -> 服务状态
- * - POST /api/chat   -> 发送文字，获取回复
  */
 class ApiClient {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)  // 下载可能较慢
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
 
@@ -48,13 +44,10 @@ class ApiClient {
         }
     }
 
-    /** 发送文字消息，获取 AI 回复 */
+    /** 发送文字消息 */
     suspend fun chat(serverUrl: String, text: String): ChatResult = withContext(Dispatchers.IO) {
         try {
-            val jsonBody = JSONObject().apply {
-                put("text", text)
-            }
-
+            val jsonBody = JSONObject().apply { put("text", text) }
             val request = Request.Builder()
                 .url("$serverUrl/api/chat")
                 .post(jsonBody.toString().toRequestBody(jsonMediaType))
@@ -70,11 +63,71 @@ class ApiClient {
                 error = json.optString("error", null)
             )
         } catch (e: Exception) {
-            ChatResult(
-                reply = "",
-                pushedToSpeaker = false,
-                error = "网络错误: ${e.localizedMessage ?: "未知错误"}"
-            )
+            ChatResult("", false, "网络错误: ${e.localizedMessage ?: "未知错误"}")
+        }
+    }
+
+    /** 搜索音乐 */
+    suspend fun searchMusic(serverUrl: String, keyword: String): List<MusicResult> = withContext(Dispatchers.IO) {
+        try {
+            val jsonBody = JSONObject().apply { put("keyword", keyword) }
+            val request = Request.Builder()
+                .url("$serverUrl/api/music/search")
+                .post(jsonBody.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: "{}"
+            val json = JSONObject(body)
+
+            if (json.has("error")) {
+                return@withContext emptyList()
+            }
+
+            val results = json.optJSONArray("results")
+            val list = mutableListOf<MusicResult>()
+            if (results != null) {
+                for (i in 0 until results.length()) {
+                    val item = results.getJSONObject(i)
+                    list.add(MusicResult(
+                        id = item.optString("id", ""),
+                        name = item.optString("name", ""),
+                        artist = item.optString("artist", ""),
+                        album = item.optString("album", ""),
+                        ext = item.optString("ext", ""),
+                        size = item.optString("size", ""),
+                        duration = item.optString("duration", "")
+                    ))
+                }
+            }
+            return@withContext list
+        } catch (e: Exception) {
+            return@withContext emptyList()
+        }
+    }
+
+    /** 下载并播放到音箱 */
+    suspend fun downloadMusic(serverUrl: String, id: String, name: String, artist: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val jsonBody = JSONObject().apply {
+                put("id", id)
+                put("name", name)
+                put("artist", artist)
+            }
+            val request = Request.Builder()
+                .url("$serverUrl/api/music/download")
+                .post(jsonBody.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: "{}"
+            val json = JSONObject(body)
+
+            return@withContext if (json.optBoolean("success", false)) {
+                json.optString("file", null)
+            } else null
+        } catch (e: Exception) {
+            return@withContext null
         }
     }
 }
@@ -89,4 +142,14 @@ data class ChatResult(
     val reply: String,
     val pushedToSpeaker: Boolean,
     val error: String? = null
+)
+
+data class MusicResult(
+    val id: String,
+    val name: String,
+    val artist: String,
+    val album: String,
+    val ext: String,
+    val size: String,
+    val duration: String
 )
