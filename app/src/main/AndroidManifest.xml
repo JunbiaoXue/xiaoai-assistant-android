@@ -9,6 +9,8 @@
     <!-- 允许 HTTP 访问局域网服务器 -->
     <application
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.XiaoaiAssistant"
