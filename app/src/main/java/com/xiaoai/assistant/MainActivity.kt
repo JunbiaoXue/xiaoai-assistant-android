@@ -85,7 +85,7 @@ fun XiaoaiTheme(content: @Composable () -> Unit) {
 data class ChatMessage(
     val text: String,
     val isUser: Boolean,
-    val timestamp: Long = System.currentTimeMillis()
+    val id: Long = System.currentTimeMillis()
 )
 
 // =============================================
@@ -103,14 +103,14 @@ fun XiaoaiApp() {
     var serverUrl by remember { mutableStateOf("http://192.168.1.15:8765") }
     var isProcessing by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("就绪") }
-    var statusType by remember { mutableStateOf("idle") }  // idle | thinking | speaking | error
+    var statusType by remember { mutableStateOf("idle") }
     var speakerName by remember { mutableStateOf("检测中...") }
     var showSettings by remember { mutableStateOf(false) }
     var isListening by remember { mutableStateOf(false) }
     var useTextMode by remember { mutableStateOf(false) }
     var textInput by remember { mutableStateOf("") }
     var interimText by remember { mutableStateOf("") }
-    var currentTab by remember { mutableStateOf(0) }  // 0=对话, 1=音乐
+    var currentTab by remember { mutableStateOf(0) }
 
     // SharedPreferences
     val prefs = remember { context.getSharedPreferences("xiaoai", 0) }
@@ -123,14 +123,20 @@ fun XiaoaiApp() {
     // 刷新状态
     fun refreshStatus() {
         scope.launch {
-            val status = api.getStatus(serverUrl)
-            speakerName = status.speaker
-            if (!status.running) {
-                statusText = "❌ 无法连接服务器"
+            try {
+                val status = api.getStatus(serverUrl)
+                speakerName = status.speaker
+                if (!status.running) {
+                    statusText = "❌ 无法连接服务器"
+                    statusType = "error"
+                } else {
+                    statusText = "已连接"
+                    statusType = "idle"
+                }
+            } catch (e: Exception) {
+                statusText = "❌ 连接失败"
                 statusType = "error"
-            } else {
-                statusText = "已连接"
-                statusType = "idle"
+                speakerName = "连接失败"
             }
         }
     }
@@ -143,88 +149,58 @@ fun XiaoaiApp() {
         )
     }
 
+    // 发送文字到服务器（使用 MutableState 避免闭包问题）
+    val messagesState = remember { mutableStateOf(listOf<ChatMessage>()) }
+    val isProcessingState = remember { mutableStateOf(false) }
+    val statusTextState = remember { mutableStateOf("就绪") }
+    val statusTypeState = remember { mutableStateOf("idle") }
+
+    // 同步状态
+    messages = messagesState.value
+    isProcessing = isProcessingState.value
+    statusText = statusTextState.value
+    statusType = statusTypeState.value
+
+    fun sendToServer(text: String) {
+        if (text.isBlank()) return
+        isProcessingState.value = true
+        statusTextState.value = "🤔 小管家思考中..."
+        statusTypeState.value = "thinking"
+
+        messagesState.value = messagesState.value + ChatMessage(text.trim(), isUser = true)
+
+        scope.launch {
+            try {
+                val result = api.chat(serverUrl, text.trim())
+                if (result.error != null) {
+                    messagesState.value = messagesState.value + ChatMessage("❌ ${result.error}", isUser = false)
+                    statusTextState.value = "❌ ${result.error}"
+                    statusTypeState.value = "error"
+                } else {
+                    messagesState.value = messagesState.value + ChatMessage(result.reply, isUser = false)
+                    if (result.pushedToSpeaker) {
+                        statusTextState.value = "🔊 小爱音箱播报中..."
+                        statusTypeState.value = "speaking"
+                    } else {
+                        statusTextState.value = "✅ 回复完成"
+                        statusTypeState.value = "idle"
+                    }
+                }
+            } catch (e: Exception) {
+                messagesState.value = messagesState.value + ChatMessage("❌ 发送失败: ${e.localizedMessage}", isUser = false)
+                statusTextState.value = "❌ 发送失败"
+                statusTypeState.value = "error"
+            }
+            isProcessingState.value = false
+        }
+    }
+
     // 语音识别器
     val speechRecognizer = remember {
         try {
             SpeechRecognizer.createSpeechRecognizer(context)
         } catch (e: Exception) {
             null
-        }
-    }
-
-    // 发送文字到服务器
-    fun sendToServer(text: String) {
-        if (text.isBlank()) return
-        isProcessing = true
-        statusText = "🤔 小管家思考中..."
-        statusType = "thinking"
-
-        messages = messages + ChatMessage(text.trim(), isUser = true)
-
-        scope.launch {
-            val result = api.chat(serverUrl, text.trim())
-            if (result.error != null) {
-                messages = messages + ChatMessage("❌ $result.error", isUser = false)
-                statusText = "❌ ${result.error}"
-                statusType = "error"
-            } else {
-                messages = messages + ChatMessage(result.reply, isUser = false)
-                if (result.pushedToSpeaker) {
-                    statusText = "🔊 小爱音箱播报中..."
-                    statusType = "speaking"
-                } else {
-                    statusText = "✅ 回复完成"
-                    statusType = "idle"
-                }
-            }
-            isProcessing = false
-        }
-    }
-
-    // 语音识别监听器（必须在 startListening 之前定义）
-    val recognitionListener = remember {
-        object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                statusText = "🎤 请说话..."
-                statusType = "thinking"
-                interimText = ""
-            }
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {
-                statusText = "🎤 识别中..."
-            }
-            override fun onError(error: Int) {
-                isListening = false
-                val msg = when (error) {
-                    SpeechRecognizer.ERROR_NO_MATCH -> "没听清，请再说一遍"
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没有说话"
-                    SpeechRecognizer.ERROR_NETWORK -> "网络错误"
-                    SpeechRecognizer.ERROR_AUDIO -> "麦克风问题"
-                    else -> "语音识别错误 ($error)"
-                }
-                statusText = "❌ $msg"
-                statusType = "error"
-            }
-            override fun onResults(results: Bundle?) {
-                isListening = false
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!matches.isNullOrEmpty()) {
-                    val text = matches[0]
-                    interimText = ""
-                    sendToServer(text)
-                }
-            }
-            override fun onPartialResults(partialResults: Bundle?) {
-                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!matches.isNullOrEmpty()) {
-                    interimText = matches[0]
-                    statusText = "🎤 $interimText"
-                    statusType = "thinking"
-                }
-            }
-            override fun onEvent(eventType: Int, params: Bundle?) {}
         }
     }
 
@@ -239,7 +215,52 @@ fun XiaoaiApp() {
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             }
-            speechRecognizer.setRecognitionListener(recognitionListener)
+
+            val listener = object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    statusTextState.value = "🎤 请说话..."
+                    statusTypeState.value = "thinking"
+                    interimText = ""
+                }
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {
+                    statusTextState.value = "🎤 识别中..."
+                }
+                override fun onError(error: Int) {
+                    isListening = false
+                    val msg = when (error) {
+                        SpeechRecognizer.ERROR_NO_MATCH -> "没听清，请再说一遍"
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没有说话"
+                        SpeechRecognizer.ERROR_NETWORK -> "网络错误"
+                        SpeechRecognizer.ERROR_AUDIO -> "麦克风问题"
+                        else -> "语音识别错误 ($error)"
+                    }
+                    statusTextState.value = "❌ $msg"
+                    statusTypeState.value = "error"
+                }
+                override fun onResults(results: Bundle?) {
+                    isListening = false
+                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    if (!matches.isNullOrEmpty()) {
+                        val text = matches[0]
+                        interimText = ""
+                        sendToServer(text)
+                    }
+                }
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    if (!matches.isNullOrEmpty()) {
+                        interimText = matches[0]
+                        statusTextState.value = "🎤 $interimText"
+                        statusTypeState.value = "thinking"
+                    }
+                }
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            }
+
+            speechRecognizer.setRecognitionListener(listener)
             try {
                 speechRecognizer.startListening(intent)
             } catch (e: Exception) {
@@ -285,7 +306,7 @@ fun XiaoaiApp() {
             ) {
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // ---- Tab 导航栏（始终显示，两个页面都能看到） ----
+                // ---- Tab 导航栏（始终显示） ----
                 TabRow(
                     selectedTabIndex = currentTab,
                     containerColor = NavyDark,
@@ -303,10 +324,7 @@ fun XiaoaiApp() {
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "🎙️ ",
-                            fontSize = 28.sp
-                        )
+                        Text(text = "🎙️ ", fontSize = 28.sp)
                         Text(
                             text = "小管家 AI 助手",
                             fontSize = 22.sp,
@@ -314,13 +332,8 @@ fun XiaoaiApp() {
                             color = AccentCyan
                         )
                         Spacer(modifier = Modifier.weight(1f))
-                        // 设置按钮
                         IconButton(onClick = { showSettings = true }) {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = "设置",
-                                tint = TextSecondary
-                            )
+                            Icon(Icons.Default.Settings, contentDescription = "设置", tint = TextSecondary)
                         }
                     }
 
@@ -344,11 +357,7 @@ fun XiaoaiApp() {
                                 .background(dotColor)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = statusText,
-                            fontSize = 13.sp,
-                            color = TextSecondary
-                        )
+                        Text(text = statusText, fontSize = 13.sp, color = TextSecondary)
                     }
 
                     // ---- 音箱状态 ----
@@ -358,13 +367,9 @@ fun XiaoaiApp() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (speakerName.contains("连接失败"))
-                                "🔇 音箱: $speakerName"
-                            else
-                                "🔊 音箱: $speakerName",
+                            text = if (speakerName.contains("失败")) "🔇 音箱: $speakerName" else "🔊 音箱: $speakerName",
                             fontSize = 12.sp,
-                            color = if (speakerName.contains("连接失败") || speakerName == "检测中...")
-                                TextSecondary else SuccessGreen
+                            color = if (speakerName.contains("失败") || speakerName == "检测中...") TextSecondary else SuccessGreen
                         )
                     }
 
@@ -377,9 +382,7 @@ fun XiaoaiApp() {
                             .weight(1f),
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = NavyCard),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp, Color(0x0DFFFFFF)
-                        )
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x0DFFFFFF))
                     ) {
                         LazyColumn(
                             state = listState,
@@ -388,7 +391,7 @@ fun XiaoaiApp() {
                                 .padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            items(messages, key = { "${it.timestamp}-${it.text.hashCode()}" }) { msg ->
+                            items(messages, key = { it.id }) { msg ->
                                 ChatBubble(message = msg)
                             }
                         }
@@ -412,7 +415,6 @@ fun XiaoaiApp() {
                     }
 
                     if (useTextMode) {
-                        // 文字输入模式
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -469,12 +471,10 @@ fun XiaoaiApp() {
                             }
                         }
                     } else {
-                        // 语音输入模式
                         Column(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            // 麦克风按钮
                             Box(
                                 modifier = Modifier
                                     .size(80.dp)
@@ -492,16 +492,13 @@ fun XiaoaiApp() {
                                 IconButton(
                                     onClick = {
                                         if (isProcessing) return@IconButton
-
                                         if (isListening) {
-                                            // 停止录音
                                             speechRecognizer?.stopListening()
                                             isListening = false
                                             statusText = "就绪"
                                             statusType = "idle"
                                             interimText = ""
                                         } else {
-                                            // 检查权限
                                             if (ContextCompat.checkSelfPermission(
                                                     context, Manifest.permission.RECORD_AUDIO
                                                 ) != PackageManager.PERMISSION_GRANTED
@@ -522,7 +519,6 @@ fun XiaoaiApp() {
                                     )
                                 }
                             }
-
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 text = if (isListening) "点击停止" else "点击说话",
@@ -539,9 +535,7 @@ fun XiaoaiApp() {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        TextButton(
-                            onClick = { useTextMode = !useTextMode }
-                        ) {
+                        TextButton(onClick = { useTextMode = !useTextMode }) {
                             Icon(
                                 if (useTextMode) Icons.Default.Mic else Icons.Default.Keyboard,
                                 contentDescription = null,
@@ -610,10 +604,7 @@ fun ChatBubble(message: ChatMessage) {
                         bottomEnd = if (message.isUser) 4.dp else 14.dp
                     )
                 )
-                .background(
-                    if (message.isUser) UserBubble
-                    else AiBubble
-                )
+                .background(if (message.isUser) UserBubble else AiBubble)
                 .then(
                     if (!message.isUser) Modifier.border(
                         1.dp, AiBorder, RoundedCornerShape(

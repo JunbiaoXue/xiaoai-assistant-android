@@ -60,7 +60,7 @@ class ApiClient {
             ChatResult(
                 reply = json.optString("reply", ""),
                 pushedToSpeaker = json.optBoolean("pushed_to_speaker", false),
-                error = json.optString("error", null)
+                error = if (json.has("error") && json.getString("error").isNotBlank()) json.getString("error") else null
             )
         } catch (e: Exception) {
             ChatResult("", false, "网络错误: ${e.localizedMessage ?: "未知错误"}")
@@ -142,7 +142,9 @@ data class ChatResult(
     val reply: String,
     val pushedToSpeaker: Boolean,
     val error: String? = null
-)
+) {
+    fun hasError(): Boolean = !error.isNullOrBlank()
+}
 
 data class MusicResult(
     val id: String,
