@@ -31,12 +31,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.xiaoai.assistant.network.ApiClient
 import com.xiaoai.assistant.ui.theme.*
 import kotlinx.coroutines.launch
@@ -70,11 +73,6 @@ fun XiaoaiTheme(content: @Composable () -> Unit) {
             surfaceVariant = NavyMid,
             onSurfaceVariant = TextSecondary,
         ),
-        typography = Typography(
-            bodyLarge = androidx.compose.material3.Typography().bodyLarge.copy(
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Default
-            )
-        ),
         content = content
     )
 }
@@ -98,7 +96,7 @@ fun XiaoaiApp() {
     val scope = rememberCoroutineScope()
     val api = remember { ApiClient() }
 
-    // 状态
+    // ======== 所有状态统一在这里管理 ========
     var messages by remember { mutableStateOf(listOf<ChatMessage>()) }
     var serverUrl by remember { mutableStateOf("http://192.168.1.15:8765") }
     var isProcessing by remember { mutableStateOf(false) }
@@ -141,7 +139,7 @@ fun XiaoaiApp() {
         }
     }
 
-    // 首次加载刷新状态
+    // 首次加载
     LaunchedEffect(serverUrl) {
         refreshStatus()
         messages = listOf(
@@ -149,53 +147,41 @@ fun XiaoaiApp() {
         )
     }
 
-    // 发送文字到服务器（使用 MutableState 避免闭包问题）
-    val messagesState = remember { mutableStateOf(listOf<ChatMessage>()) }
-    val isProcessingState = remember { mutableStateOf(false) }
-    val statusTextState = remember { mutableStateOf("就绪") }
-    val statusTypeState = remember { mutableStateOf("idle") }
-
-    // 同步状态
-    messages = messagesState.value
-    isProcessing = isProcessingState.value
-    statusText = statusTextState.value
-    statusType = statusTypeState.value
-
+    // ======== 发送消息到服务器（统一入口） ========
     fun sendToServer(text: String) {
-        if (text.isBlank()) return
-        isProcessingState.value = true
-        statusTextState.value = "🤔 小管家思考中..."
-        statusTypeState.value = "thinking"
-
-        messagesState.value = messagesState.value + ChatMessage(text.trim(), isUser = true)
+        if (text.isBlank() || isProcessing) return
+        isProcessing = true
+        statusText = "🤔 小管家思考中..."
+        statusType = "thinking"
+        messages = messages + ChatMessage(text.trim(), isUser = true)
 
         scope.launch {
             try {
                 val result = api.chat(serverUrl, text.trim())
                 if (result.error != null) {
-                    messagesState.value = messagesState.value + ChatMessage("❌ ${result.error}", isUser = false)
-                    statusTextState.value = "❌ ${result.error}"
-                    statusTypeState.value = "error"
+                    messages = messages + ChatMessage("❌ ${result.error}", isUser = false)
+                    statusText = "❌ ${result.error}"
+                    statusType = "error"
                 } else {
-                    messagesState.value = messagesState.value + ChatMessage(result.reply, isUser = false)
+                    messages = messages + ChatMessage(result.reply, isUser = false)
                     if (result.pushedToSpeaker) {
-                        statusTextState.value = "🔊 小爱音箱播报中..."
-                        statusTypeState.value = "speaking"
+                        statusText = "🔊 小爱音箱播报中..."
+                        statusType = "speaking"
                     } else {
-                        statusTextState.value = "✅ 回复完成"
-                        statusTypeState.value = "idle"
+                        statusText = "✅ 回复完成"
+                        statusType = "idle"
                     }
                 }
             } catch (e: Exception) {
-                messagesState.value = messagesState.value + ChatMessage("❌ 发送失败: ${e.localizedMessage}", isUser = false)
-                statusTextState.value = "❌ 发送失败"
-                statusTypeState.value = "error"
+                messages = messages + ChatMessage("❌ 发送失败: ${e.localizedMessage}", isUser = false)
+                statusText = "❌ 发送失败"
+                statusType = "error"
             }
-            isProcessingState.value = false
+            isProcessing = false
         }
     }
 
-    // 语音识别器
+    // ======== 语音识别 ========
     val speechRecognizer = remember {
         try {
             SpeechRecognizer.createSpeechRecognizer(context)
@@ -204,71 +190,86 @@ fun XiaoaiApp() {
         }
     }
 
-    // 启动语音识别
+    // 生命周期监听：Activity 销毁时释放
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_DESTROY) {
+                speechRecognizer?.destroy()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     fun startListening() {
-        if (speechRecognizer != null) {
-            isListening = true
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "请说话...")
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            }
-
-            val listener = object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    statusTextState.value = "🎤 请说话..."
-                    statusTypeState.value = "thinking"
-                    interimText = ""
-                }
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {
-                    statusTextState.value = "🎤 识别中..."
-                }
-                override fun onError(error: Int) {
-                    isListening = false
-                    val msg = when (error) {
-                        SpeechRecognizer.ERROR_NO_MATCH -> "没听清，请再说一遍"
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没有说话"
-                        SpeechRecognizer.ERROR_NETWORK -> "网络错误"
-                        SpeechRecognizer.ERROR_AUDIO -> "麦克风问题"
-                        else -> "语音识别错误 ($error)"
-                    }
-                    statusTextState.value = "❌ $msg"
-                    statusTypeState.value = "error"
-                }
-                override fun onResults(results: Bundle?) {
-                    isListening = false
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    if (!matches.isNullOrEmpty()) {
-                        val text = matches[0]
-                        interimText = ""
-                        sendToServer(text)
-                    }
-                }
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    if (!matches.isNullOrEmpty()) {
-                        interimText = matches[0]
-                        statusTextState.value = "🎤 $interimText"
-                        statusTypeState.value = "thinking"
-                    }
-                }
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            }
-
-            speechRecognizer.setRecognitionListener(listener)
-            try {
-                speechRecognizer.startListening(intent)
-            } catch (e: Exception) {
-                isListening = false
-                Toast.makeText(context, "语音识别启动失败: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
-            }
-        } else {
+        if (speechRecognizer == null) {
             Toast.makeText(context, "设备不支持语音识别", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (isListening) return
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "请说话...")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        }
+
+        val listener = object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                statusText = "🎤 请说话..."
+                statusType = "thinking"
+                interimText = ""
+            }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {
+                statusText = "🎤 识别中..."
+            }
+            override fun onError(error: Int) {
+                isListening = false
+                val msg = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH -> "没听清，请再说一遍"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没有说话"
+                    SpeechRecognizer.ERROR_NETWORK -> "网络错误"
+                    SpeechRecognizer.ERROR_AUDIO -> "麦克风问题"
+                    else -> "语音识别错误 ($error)"
+                }
+                statusText = "❌ $msg"
+                statusType = "error"
+            }
+            override fun onResults(results: Bundle?) {
+                isListening = false
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    val text = matches[0]
+                    interimText = ""
+                    sendToServer(text)
+                }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {
+                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    interimText = matches[0]
+                    statusText = "🎤 $interimText"
+                    statusType = "thinking"
+                }
+            }
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        }
+
+        speechRecognizer.setRecognitionListener(listener)
+        try {
+            speechRecognizer.startListening(intent)
+            isListening = true
+        } catch (e: Exception) {
+            isListening = false
+            Toast.makeText(context, "语音识别启动失败", Toast.LENGTH_SHORT).show()
         }
     }
 
