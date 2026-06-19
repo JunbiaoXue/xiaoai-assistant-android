@@ -559,8 +559,7 @@ fun XiaoaiApp() {
                 if (currentTab == 1) {
                     MusicTab(
                         serverUrl = serverUrl,
-                        api = api,
-                        scope = scope
+                        api = api
                     )
                 }
 

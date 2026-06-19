@@ -31,9 +31,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun MusicTab(
     serverUrl: String,
-    api: ApiClient,
-    scope: kotlinx.coroutines.CoroutineScope
+    api: ApiClient
 ) {
+    // 使用自己的 CoroutineScope，避免跨组件传递导致的闭包问题
+    val scope = rememberCoroutineScope()
     var keyword by remember { mutableStateOf("") }
     var results by remember { mutableStateOf(listOf<MusicResult>()) }
     var loading by remember { mutableStateOf(false) }
@@ -50,7 +51,7 @@ fun MusicTab(
     // 当前子 Tab: 0=在线搜索, 1=本地音乐
     var subTab by remember { mutableStateOf(0) }
 
-    // 加载本地音乐列表
+    // 加载本地音乐
     fun loadLocalMusic() {
         localLoading = true
         localError = null
@@ -58,13 +59,14 @@ fun MusicTab(
             try {
                 val list = api.getLocalMusic(serverUrl)
                 localSongs = list
-                if (list.isEmpty()) {
+                if (list.isEmpty() && localError == null) {
                     localError = "暂无本地音乐，先在线下载吧"
                 }
             } catch (e: Exception) {
                 localError = "加载失败: ${e.localizedMessage ?: "请检查服务器"}"
+            } finally {
+                localLoading = false
             }
-            localLoading = false
         }
     }
 
@@ -75,15 +77,16 @@ fun MusicTab(
         scope.launch {
             try {
                 val success = api.playLocalMusic(serverUrl, song.file, song.name, song.artist)
-                if (success) {
-                    downloadStatus = "🔊 正在播放: ${song.name}"
+                downloadStatus = if (success) {
+                    "🔊 正在播放: ${song.name}"
                 } else {
-                    downloadStatus = "❌ 播放失败"
+                    "❌ 播放失败"
                 }
             } catch (e: Exception) {
                 downloadStatus = "❌ 播放失败: ${e.localizedMessage}"
+            } finally {
+                playingLocal = null
             }
-            playingLocal = null
         }
     }
 
@@ -237,22 +240,24 @@ fun MusicTab(
                 )
                 Button(
                     onClick = {
-                        if (keyword.isBlank() || loading) return@Button
+                        val searchKeyword = keyword.trim()
+                        if (searchKeyword.isBlank() || loading) return@Button
                         loading = true
                         error = null
                         results = emptyList()
                         downloadStatus = null
                         scope.launch {
                             try {
-                                val res = api.searchMusic(serverUrl, keyword.trim())
-                                if (res.isEmpty()) {
+                                val res = api.searchMusic(serverUrl, searchKeyword)
+                                results = res
+                                if (res.isEmpty() && error == null) {
                                     error = "未找到相关歌曲，换个关键词试试"
                                 }
-                                results = res
                             } catch (e: Exception) {
                                 error = "搜索失败: ${e.localizedMessage ?: "请检查网络"}"
+                            } finally {
+                                loading = false
                             }
-                            loading = false
                         }
                     },
                     enabled = !loading && keyword.isNotBlank(),
@@ -319,20 +324,22 @@ fun MusicTab(
                                 song = song,
                                 isDownloading = downloadingId == song.id,
                                 onDownload = {
-                                    downloadingId = song.id
-                                    downloadStatus = "正在下载 ${song.name}..."
+                                    val currentSong = song  // 捕获当前值
+                                    downloadingId = currentSong.id
+                                    downloadStatus = "正在下载 ${currentSong.name}..."
                                     scope.launch {
                                         try {
-                                            val result = api.downloadMusic(serverUrl, song.id, song.name, song.artist)
-                                            if (result != null) {
-                                                downloadStatus = "✅ ${song.name} 已下载并推送到音箱"
+                                            val result = api.downloadMusic(serverUrl, currentSong.id, currentSong.name, currentSong.artist)
+                                            downloadStatus = if (result != null) {
+                                                "✅ ${currentSong.name} 已下载并推送到音箱"
                                             } else {
-                                                downloadStatus = "❌ 下载失败，请重试"
+                                                "❌ 下载失败，请重试"
                                             }
                                         } catch (e: Exception) {
                                             downloadStatus = "❌ 下载失败: ${e.localizedMessage}"
+                                        } finally {
+                                            downloadingId = null
                                         }
-                                        downloadingId = null
                                     }
                                 }
                             )
