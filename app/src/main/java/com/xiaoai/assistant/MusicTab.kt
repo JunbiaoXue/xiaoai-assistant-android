@@ -15,18 +15,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xiaoai.assistant.network.ApiClient
+import com.xiaoai.assistant.network.LocalSongInfo
 import com.xiaoai.assistant.network.MusicResult
 import com.xiaoai.assistant.ui.theme.*
 import kotlinx.coroutines.launch
-import org.json.JSONObject
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 /**
  * 音乐 Tab：在线搜索 + 本地音乐
@@ -46,7 +42,7 @@ fun MusicTab(
     var downloadStatus by remember { mutableStateOf<String?>(null) }
 
     // 本地音乐
-    var localSongs by remember { mutableStateOf(listOf<LocalSong>()) }
+    var localSongs by remember { mutableStateOf(listOf<LocalSongInfo>()) }
     var localLoading by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
     var playingLocal by remember { mutableStateOf<String?>(null) }
@@ -60,29 +56,7 @@ fun MusicTab(
         localError = null
         scope.launch {
             try {
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(5, TimeUnit.SECONDS)
-                    .readTimeout(10, TimeUnit.SECONDS)
-                    .build()
-                val request = Request.Builder()
-                    .url("$serverUrl/api/music/local")
-                    .get()
-                    .build()
-                val response = client.newCall(request).execute()
-                val body = response.body?.string() ?: "{\"songs\":[]}"
-                val json = JSONObject(body)
-                val songsArray = json.optJSONArray("songs") ?: org.json.JSONArray()
-                val list = mutableListOf<LocalSong>()
-                for (i in 0 until songsArray.length()) {
-                    val item = songsArray.getJSONObject(i)
-                    list.add(LocalSong(
-                        name = item.optString("name", ""),
-                        artist = item.optString("artist", "未知"),
-                        file = item.optString("file", ""),
-                        size = item.optString("size", ""),
-                        duration = item.optString("duration", "")
-                    ))
-                }
+                val list = api.getLocalMusic(serverUrl)
                 localSongs = list
                 if (list.isEmpty()) {
                     localError = "暂无本地音乐，先在线下载吧"
@@ -95,30 +69,13 @@ fun MusicTab(
     }
 
     // 播放本地音乐
-    fun playLocal(song: LocalSong) {
+    fun playLocal(song: LocalSongInfo) {
         playingLocal = song.file
         downloadStatus = "正在播放: ${song.name}..."
         scope.launch {
             try {
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(5, TimeUnit.SECONDS)
-                    .readTimeout(30, TimeUnit.SECONDS)
-                    .build()
-                val jsonBody = JSONObject().apply {
-                    put("file", song.file)
-                    put("name", song.name)
-                    put("artist", song.artist)
-                }
-                val body = jsonBody.toString()
-                    .toRequestBody("application/json; charset=utf-8".toMediaType())
-                val request = Request.Builder()
-                    .url("$serverUrl/api/music/play_local")
-                    .post(body)
-                    .build()
-                val response = client.newCall(request).execute()
-                val respBody = response.body?.string() ?: "{}"
-                val respJson = JSONObject(respBody)
-                if (respJson.optBoolean("success", false)) {
+                val success = api.playLocalMusic(serverUrl, song.file, song.name, song.artist)
+                if (success) {
                     downloadStatus = "🔊 正在播放: ${song.name}"
                 } else {
                     downloadStatus = "❌ 播放失败"
@@ -189,7 +146,7 @@ fun MusicTab(
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // 子 Tab 切换
+        // 子 Tab 切换器
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -387,11 +344,19 @@ fun MusicTab(
 
         // ===== 本地音乐 =====
         if (subTab == 1) {
-            // 刷新按钮
+            // 刷新按钮 + 歌曲数量
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                if (localSongs.isNotEmpty()) {
+                    Text(
+                        text = "共 ${localSongs.size} 首",
+                        fontSize = 13.sp,
+                        color = TextSecondary
+                    )
+                }
                 TextButton(onClick = { loadLocalMusic() }) {
                     Icon(
                         Icons.Default.Refresh,
@@ -488,7 +453,7 @@ fun SongCard(
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 序号圆圈
+            // 音乐图标
             Box(
                 modifier = Modifier
                     .size(40.dp)
@@ -565,22 +530,11 @@ fun SongCard(
 }
 
 // =============================================
-// 本地歌曲数据类
-// =============================================
-data class LocalSong(
-    val name: String,
-    val artist: String,
-    val file: String,
-    val size: String,
-    val duration: String
-)
-
-// =============================================
 // 本地歌曲卡片
 // =============================================
 @Composable
 fun LocalSongCard(
-    song: LocalSong,
+    song: LocalSongInfo,
     isPlaying: Boolean,
     onPlay: () -> Unit
 ) {
@@ -645,10 +599,6 @@ fun LocalSongCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (song.duration.isNotEmpty()) {
-                        Text(text = "⏱ ${song.duration}", fontSize = 11.sp, color = TextSecondary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                    }
                     if (song.size.isNotEmpty()) {
                         Text(text = "💾 ${song.size}", fontSize = 11.sp, color = TextSecondary)
                     }

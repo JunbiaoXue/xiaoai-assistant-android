@@ -130,6 +130,57 @@ class ApiClient {
             return@withContext null
         }
     }
+
+    /** 获取本地音乐列表 */
+    suspend fun getLocalMusic(serverUrl: String): List<LocalSongInfo> = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$serverUrl/api/music/local")
+                .get()
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: "{\"songs\":[]}"
+            val json = JSONObject(body)
+            val songsArray = json.optJSONArray("songs") ?: org.json.JSONArray()
+            val list = mutableListOf<LocalSongInfo>()
+            for (i in 0 until songsArray.length()) {
+                val item = songsArray.getJSONObject(i)
+                list.add(LocalSongInfo(
+                    name = item.optString("name", ""),
+                    artist = item.optString("artist", "未知"),
+                    file = item.optString("file", ""),
+                    size = item.optString("size", ""),
+                    duration = item.optString("duration", "")
+                ))
+            }
+            return@withContext list
+        } catch (e: Exception) {
+            return@withContext emptyList()
+        }
+    }
+
+    /** 播放本地音乐 */
+    suspend fun playLocalMusic(serverUrl: String, file: String, name: String, artist: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val jsonBody = JSONObject().apply {
+                put("file", file)
+                put("name", name)
+                put("artist", artist)
+            }
+            val request = Request.Builder()
+                .url("$serverUrl/api/music/play_local")
+                .post(jsonBody.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: "{}"
+            val json = JSONObject(body)
+            return@withContext json.optBoolean("success", false)
+        } catch (e: Exception) {
+            return@withContext false
+        }
+    }
 }
 
 data class ServerStatus(
@@ -152,6 +203,14 @@ data class MusicResult(
     val artist: String,
     val album: String,
     val ext: String,
+    val size: String,
+    val duration: String
+)
+
+data class LocalSongInfo(
+    val name: String,
+    val artist: String,
+    val file: String,
     val size: String,
     val duration: String
 )
