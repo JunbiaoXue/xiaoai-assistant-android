@@ -1,30 +1,42 @@
 package com.xiaoai.assistant.ui.theme
 
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import android.app.Activity
+import android.os.Build
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
-private val XiaoaiColorScheme = darkColorScheme(
+private val DarkColorScheme = darkColorScheme(
     primary = AccentCyan,
-    onPrimary = Color.Black,
+    onPrimary = NavyDark,
+    secondary = AccentPurple,
+    onSecondary = TextPrimary,
+    tertiary = AccentCyan,
     background = NavyDark,
     onBackground = TextPrimary,
     surface = NavyCard,
     onSurface = TextPrimary,
-    secondary = AccentPurple,
-    onSecondary = TextPrimary,
-    error = ErrorRed,
-    onError = Color.White,
     surfaceVariant = NavyMid,
     onSurfaceVariant = TextSecondary,
-    outline = DividerColor,
+    error = ErrorRed,
+    onError = TextPrimary,
+    outline = AiBorder,
 )
 
 @Composable
-fun XiaoaiTheme(content: @Composable () -> Unit) {
+fun XiaoaiTheme(
+    content: @Composable () -> Unit
+) {
+    val colorScheme = DarkColorScheme
+
     MaterialTheme(
-        colorScheme = XiaoaiColorScheme,
+        colorScheme = colorScheme,
+        typography = Typography(),
         content = content
     )
 }
