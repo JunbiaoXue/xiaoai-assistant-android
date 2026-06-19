@@ -181,30 +181,7 @@ fun XiaoaiApp() {
         }
     }
 
-    // 启动语音识别的公共方法
-    fun startListening() {
-        if (speechRecognizer != null) {
-            isListening = true
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "请说话...")
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            }
-            speechRecognizer.setRecognitionListener(recognitionListener)
-            try {
-                speechRecognizer.startListening(intent)
-            } catch (e: Exception) {
-                isListening = false
-                Toast.makeText(context, "语音识别启动失败: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            Toast.makeText(context, "设备不支持语音识别", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // 语音识别监听器
+    // 语音识别监听器（必须在 startListening 之前定义）
     val recognitionListener = remember {
         object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
@@ -248,6 +225,29 @@ fun XiaoaiApp() {
                 }
             }
             override fun onEvent(eventType: Int, params: Bundle?) {}
+        }
+    }
+
+    // 启动语音识别
+    fun startListening() {
+        if (speechRecognizer != null) {
+            isListening = true
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "请说话...")
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            }
+            speechRecognizer.setRecognitionListener(recognitionListener)
+            try {
+                speechRecognizer.startListening(intent)
+            } catch (e: Exception) {
+                isListening = false
+                Toast.makeText(context, "语音识别启动失败: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(context, "设备不支持语音识别", Toast.LENGTH_SHORT).show()
         }
     }
 
